@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pet tag</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+:root{--bg:#e6f0f3;--card:#fff;--ink:#12303b;--mute:#53707b;--line:#c5d8de;--brass:#f2b134;--alert:#c8372d}
+@media (prefers-color-scheme:dark){:root{--bg:#0f2027;--card:#173039;--ink:#e8f3f6;--mute:#9bb5bd;--line:#2c4952;--alert:#ff7a6e}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,sans-serif;line-height:1.45}
+main{max-width:480px;margin:0 auto;padding:16px}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:20px;margin-bottom:16px}
+h1{font-size:40px;line-height:1;margin:0 0 4px;text-align:center}
+h2{margin:0 0 8px}
+.sub,.note{color:var(--mute);font-size:14px}.sub{text-align:center}
+.row{padding:10px 0;border-top:1px solid var(--line)}
+.row small{display:block;color:var(--mute)}.row b{font-size:18px;overflow-wrap:anywhere}
+label{display:block;font-weight:600;margin-top:14px}
+input[type=text],input[type=email],textarea{width:100%;padding:10px 12px;margin-top:4px;border:1px solid var(--line);border-radius:12px;background:var(--bg);color:var(--ink);font:inherit}
+.vis{display:flex;gap:8px;align-items:center;font-weight:400;color:var(--mute);font-size:14px;margin-top:6px}
+button,.call{display:block;width:100%;margin-top:14px;padding:13px;border:0;border-radius:14px;background:var(--ink);color:var(--bg);font:700 16px system-ui;text-align:center;text-decoration:none;cursor:pointer}
+button.alt{background:transparent;color:var(--ink);border:1px solid var(--line)}
+.call{background:var(--brass);color:#3a2800}
+.msg{min-height:1.4em;font-weight:600}.err{color:var(--alert)}
+#qr{display:flex;justify-content:center;margin-top:12px}#qr img,#qr canvas{background:#fff;padding:8px;border-radius:12px}
+.lost{background:var(--alert);color:#fff;text-align:center;font-weight:800;font-size:20px;border-radius:16px;padding:14px;margin-bottom:16px}
+:focus-visible{outline:3px solid var(--brass);outline-offset:2px}
+</style>
+</head>
+<body>
+<main id="view"></main>
+<script>
+// 1) PASTE YOUR OWN VALUES (Supabase > Project Settings > API)
+var SUPABASE_URL = "https://YOUR-PROJECT.supabase.co";
+var SUPABASE_ANON_KEY = "YOUR-ANON-PUBLIC-KEY";
+
+var sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+var view = document.getElementById("view");
+var FIELDS = [["name","Pet name"],["breed","Breed"],["age","Age"],["marks","Colour and markings"],
+  ["owner","Owner name"],["phone","Owner phone"],["address","Home address"],["medical","Medical notes"]];
+var HIDDEN_BY_DEFAULT = {address:true};
+
+function el(tag, props, kids){
+  var n = document.createElement(tag);
+  Object.keys(props||{}).forEach(function(k){ n[k] = props[k]; });
+  (kids||[]).forEach(function(c){ n.appendChild(typeof c === "string" ? document.createTextNode(c) : c); });
+  return n;
+}
+function panel(kids){ var p = el("section",{className:"panel"},kids); view.appendChild(p); return p; }
+function clear(){ view.innerHTML = ""; }
+function setMsg(node, text, bad){ node.textContent = text; node.className = "msg" + (bad ? " err" : ""); }
+
+// ---------- Public page: #/pet/<id> ----------
+async function showPet(id){
+  clear();
+  var r = await sb.rpc("get_public_pet", {p_id: id});
+  var d = r.data || {};
+  if (r.error || !Object.keys(d).length){
+    panel([el("h2",{textContent:"Nothing to show"}), el("p",{className:"note",textContent:"This tag has no public details."})]);
+    return;
+  }
+  if (d.lost === true) view.appendChild(el("div",{className:"lost",textContent:"I’m lost. Please call my owner."}));
+  var kids = [el("h1",{textContent: d.name || "Lost pet"}),
+              el("p",{className:"sub",textContent:[d.breed,d.age].filter(Boolean).join(", ")})];
+  FIELDS.forEach(function(f){
+    if (["name","breed","age"].indexOf(f[0]) > -1 || !d[f[0]]) return;
+    kids.push(el("div",{className:"row"},[el("small",{textContent:f[1]}), el("b",{textContent:d[f[0]]})]));
+  });
+  if (d.phone) kids.push(el("a",{className:"call",textContent:"Call my owner",href:"tel:"+String(d.phone).replace(/[^+\d]/g,"")}));
+  panel(kids);
+}
+
+// ---------- Login ----------
+function showLogin(){
+  clear();
+  var email = el("input",{type:"email",id:"em",autocomplete:"email"});
+  var msg = el("p",{className:"msg"});
+  var consent = el("input",{type:"checkbox",id:"cn"});
+  var consentRow = el("label",{className:"vis",htmlFor:"cn"},[consent,"I agree to the ",el("a",{href:"privacy.html",target:"_blank",textContent:"privacy notice"},[]),"."]);
+  var btn = el("button",{textContent:"Email me a login link"});
+  btn.onclick = async function(){
+    if (!consent.checked) return setMsg(msg, "Please tick the box to continue.", true);
+    var r = await sb.auth.signInWithOtp({email: email.value.trim(), options:{emailRedirectTo: location.href.split("#")[0]}});
+    r.error ? setMsg(msg, r.error.message, true) : setMsg(msg, "Check your email and tap the link.");
+  };
+  panel([el("h2",{textContent:"Owner login"}), el("label",{htmlFor:"em",textContent:"Your email"}), email, consentRow, btn, msg,
+         el("p",{className:"note",textContent:"We store your pet’s details only to show them when the tag is scanned. You can edit or delete them anytime."})]);
+}
+
+// ---------- Dashboard ----------
+async function showDash(){
+  clear();
+  var r = await sb.from("pets").select("id,details").order("created_at");
+  var box = panel([el("h2",{textContent:"Your pets"})]);
+  var adm = await sb.rpc("is_admin");
+  if (adm.data === true) box.appendChild(el("p",{className:"note",textContent:"Admin view: you can see and edit all pets."}));
+  if (r.error) box.appendChild(el("p",{className:"msg err",textContent:r.error.message}));
+  (r.data||[]).forEach(function(p){
+    var b = el("button",{className:"alt",textContent:"Edit " + ((p.details.name||{}).v || "pet")});
+    b.onclick = function(){ showEdit(p); };
+    box.appendChild(b);
+  });
+  var add = el("button",{textContent:"Add a pet"}); add.onclick = function(){ showEdit(null); };
+  var out = el("button",{className:"alt",textContent:"Log out"});
+  out.onclick = async function(){ await sb.auth.signOut(); showLogin(); };
+  box.appendChild(add); box.appendChild(out);
+}
+
+function showEdit(pet){
+  clear();
+  var details = pet ? pet.details : {};
+  var form = panel([el("h2",{textContent: pet ? "Edit pet" : "New pet"})]);
+  var inputs = {};
+  FIELDS.forEach(function(f){
+    var k = f[0], cur = details[k] || {v:"", show: !HIDDEN_BY_DEFAULT[k]};
+    var inp = k === "medical" ? el("textarea",{rows:3}) : el("input",{type:"text"});
+    inp.id = "f_" + k; inp.value = cur.v;
+    var cb = el("input",{type:"checkbox",id:"s_" + k,checked:cur.show});
+    inputs[k] = {inp:inp, cb:cb};
+    form.appendChild(el("label",{htmlFor:inp.id,textContent:f[1]}));
+    form.appendChild(inp);
+    form.appendChild(el("label",{className:"vis",htmlFor:cb.id},[cb, "Show this when someone scans"]));
+  });
+  var lostCb = el("input",{type:"checkbox",id:"lostmode",checked:!!(details.lost && details.lost.v)});
+  form.appendChild(el("label",{className:"vis",htmlFor:"lostmode"},[lostCb,"Lost mode: show a red “I’m lost” banner on the scan page"]));
+  var msg = el("p",{className:"msg"});
+  var save = el("button",{textContent:"Save changes"});
+  save.onclick = async function(){
+    var out = {};
+    FIELDS.forEach(function(f){ out[f[0]] = {v: inputs[f[0]].inp.value.trim(), show: inputs[f[0]].cb.checked}; });
+    out.lost = {v: lostCb.checked, show: true};
+    var r = pet ? await sb.from("pets").update({details:out}).eq("id",pet.id).select().single()
+                : await sb.from("pets").insert({details:out}).select().single();
+    if (r.error) return setMsg(msg, r.error.message, true);
+    pet = r.data; setMsg(msg, "Saved."); drawQR(pet.id);
+  };
+  var back = el("button",{className:"alt",textContent:"Back to your pets"}); back.onclick = showDash;
+  form.appendChild(save); form.appendChild(msg); form.appendChild(back);
+  if (pet){
+    var del = el("button",{className:"alt",textContent:"Delete this pet"});
+    del.onclick = async function(){
+      if (!confirm("Delete this pet and its tag page? This cannot be undone.")) return;
+      var r = await sb.from("pets").delete().eq("id",pet.id);
+      r.error ? setMsg(msg, r.error.message, true) : showDash();
+    };
+    form.appendChild(del);
+  }
+  var qrPanel = panel([el("strong",{textContent:"QR code for the tag"}), el("div",{id:"qr"}),
+    el("p",{className:"note",textContent:"The QR holds only this link, so edits never need a new tag."})]);
+  if (pet) drawQR(pet.id);
+}
+
+function drawQR(id){
+  var q = document.getElementById("qr"); if (!q) return; q.innerHTML = "";
+  new QRCode(q, {text: location.href.split("#")[0] + "#/pet/" + id, width:176, height:176});
+}
+
+// ---------- Router ----------
+async function route(){
+  var m = location.hash.match(/^#\/pet\/([0-9a-fA-F-]{36})$/);
+  if (m) return showPet(m[1]);
+  var s = await sb.auth.getSession();
+  s.data.session ? showDash() : showLogin();
+}
+window.addEventListener("hashchange", route);
+sb.auth.onAuthStateChange(function(ev){ if (ev === "SIGNED_IN") route(); });
+route();
+</script>
+</body>
+</html>
